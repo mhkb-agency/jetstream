@@ -1,0 +1,17 @@
+[project]
+name = "mhkb-jetstream"
+version = "0.1.0"
+description = "A minimal, stdlib-lean, unified sync+async HTTP client that feels like requests and performs like a modern async library."
+readme = "README.md"
+authors = [
+    { name = "Manoah Bernier", email = "manoah.bernier@pm.me" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+jetstream = "jetstream:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
