@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build, Lint, Type, Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e .
+          uv pip install ruff mypy pytest pytest-cov build
+
+      - name: Lint (ruff)
+        run: uv run ruff check src tests
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check src tests
+
+      - name: Type check (mypy)
+        run: uv run mypy src
+
+      - name: Tests with coverage (enforced)
+        if: hashFiles('tests/**/*.py') != ''
+        run: uv run pytest --cov=jetstream --cov-report=term-missing --cov-fail-under=90 -q
+
+      - name: Tests (no test files)
+        if: hashFiles('tests/**/*.py') == ''
+        run: echo "No tests found; skipping coverage gate." && uv run pytest -q || true
+
+      - name: Build distributions (sanity check)
+        run: uv run python -m build
+
+  publish:
+    name: Create GitHub Release
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure merge commit (only run on merges)
+        id: mergecheck
+        shell: bash
+        run: |
+          parents=$(git rev-list --parents -n 1 "$GITHUB_SHA")
+          # Count fields (sha + parents). Merge commit has > 2 fields
+          count=$(echo "$parents" | wc -w | tr -d ' ')
+          if [ "$count" -gt 2 ]; then
+            echo "is_merge=true" >> $GITHUB_OUTPUT
+            echo "Merge commit detected ($parents)"
+          else
+            echo "is_merge=false" >> $GITHUB_OUTPUT
+            echo "Not a merge commit; skipping release. ($parents)"
+          fi
+
+      - name: Setup Python
+        if: steps.mergecheck.outputs.is_merge == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Setup uv
+        if: steps.mergecheck.outputs.is_merge == 'true'
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install release tooling
+        if: steps.mergecheck.outputs.is_merge == 'true'
+        run: |
+          uv pip install python-semantic-release build
+
+      - name: Configure git user
+        if: steps.mergecheck.outputs.is_merge == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run semantic release (GitHub only)
+        if: steps.mergecheck.outputs.is_merge == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          uv run semantic-release publish
